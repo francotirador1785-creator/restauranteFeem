@@ -1,14 +1,18 @@
+// App.js
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import TablesManagerScreen from './src/features/admin/screens/TablesManagerScreen.jsx';
+import { AuthProvider } from './src/context/AuthContext';
+import AppNavigator from './src/navigation/AppNavigator';
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <StatusBar style="light" />
-      <TablesManagerScreen />
-    </View>
+    <AuthProvider>
+      <View style={styles.container}>
+        <StatusBar style="light" />
+        <AppNavigator />
+      </View>
+    </AuthProvider>
   );
 }
 
