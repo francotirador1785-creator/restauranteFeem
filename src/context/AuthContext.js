@@ -6,79 +6,62 @@ const AuthContext = createContext({});
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [userRole, setUserRole] = useState(null);
+  const [userRole, setUserRole] = useState(null); // Empezamos sin rol hardcodeado
   const [loading, setLoading] = useState(true);
 
+  const fetchUserRole = async (userId) => {
+    try {
+      // Consultamos el rol en la tabla de perfiles de Supabase
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .single();
+
+      if (error || !data) {
+        // Si no hay tabla profiles, le asignamos 'mozo' por seguridad en lugar de admin
+        setUserRole('mozo');
+      } else {
+        setUserRole(data.role);
+      }
+    } catch (err) {
+      setUserRole('mozo');
+    }
+  };
+
   useEffect(() => {
-    // 1. Obtener la sesión activa
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setUser(session.user);
-        fetchUserProfile(session.user.id);
-      } else {
-        setLoading(false);
+        fetchUserRole(session.user.id);
       }
+      setLoading(false);
     });
 
-    // 2. Escuchar cambios de autenticación
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         setUser(session.user);
-        await fetchUserProfile(session.user.id);
+        fetchUserRole(session.user.id);
       } else {
         setUser(null);
         setUserRole(null);
-        setLoading(false);
       }
+      setLoading(false);
     });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      listener?.subscription?.unsubscribe();
     };
   }, []);
 
-  const fetchUserProfile = async (userId) => {
-    try {
-      const { data, error } = await supabase
-        .from('usuarios')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle(); // Evita crash si no existe la fila aún
-
-      if (error) throw error;
-      if (data) {
-        setUserRole(data.rol);
-      }
-    } catch (error) {
-      console.error('Error fetching user profile:', error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const login = async (email, password) => {
-    setLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) {
-      setLoading(false);
-      throw error;
-    }
-    return data;
-  };
-
-  const logout = async () => {
-    setLoading(true);
+  const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
     setUserRole(null);
-    setLoading(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, userRole, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, userRole, signOut, loading }}>
       {children}
     </AuthContext.Provider>
   );
