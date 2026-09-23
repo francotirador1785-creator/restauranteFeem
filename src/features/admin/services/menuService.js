@@ -1,8 +1,7 @@
+// src/features/admin/services/menuService.js
 import { supabase } from '../../../config/supabase';
 
-/**
- * Obtener todas las categorías ordenadas
- */
+// 1. Obtener todas las categorías
 export const getCategories = async () => {
   const { data, error } = await supabase
     .from('categories')
@@ -13,62 +12,66 @@ export const getCategories = async () => {
   return data;
 };
 
-/**
- * Obtener productos con su precio vigente e información de modificadores
- */
-export const getProductsWithPrices = async () => {
+// 2. Obtener productos con su precio activo
+export const getProducts = async () => {
   const { data, error } = await supabase
     .from('products')
     .select(`
-      *,
-      product_prices!inner (
-        price,
-        valid_until
-      ),
-      option_groups (
-        id,
-        name,
-        is_required,
-        max_options,
-        options (
-          id,
-          name,
-          extra_price
-        )
-      )
+      id,
+      category_id,
+      name,
+      description,
+      is_available,
+      image_url,
+      product_prices ( price )
     `)
-    .is('product_prices.valid_until', null) // Filtra únicamente el precio activo
-    .order('created_at', { ascending: false });
+    .order('name', { ascending: true });
 
   if (error) throw error;
-  return data;
+  
+  // Mapeamos el precio de la relación de Supabase
+  return data.map((p) => ({
+    ...p,
+    price: p.product_prices && p.product_prices.length > 0 ? p.product_prices[0].price : 0,
+  }));
 };
 
-/**
- * Crear un producto e insertar su precio inicial
- */
-export const createProductWithPrice = async ({
-  category_id,
-  name,
-  description,
-  image_url,
-  price,
-}) => {
-  // 1. Crear el producto
-  const { data: product, error: prodError } = await supabase
+// 3. Crear un producto y asignarle un precio
+export const createProduct = async (productData) => {
+  const { name, description, price, category_id, image_url } = productData;
+
+  // Insertar producto
+  const { data: newProduct, error: prodError } = await supabase
     .from('products')
-    .insert([{ category_id, name, description, image_url }])
+    .insert([
+      {
+        name,
+        description,
+        category_id,
+        image_url: image_url || null,
+        is_available: true,
+      },
+    ])
     .select()
     .single();
 
   if (prodError) throw prodError;
 
-  // 2. Insertar el precio inicial en product_prices
-  const { error: priceError } = await supabase
-    .from('product_prices')
-    .insert([{ product_id: product.id, price: parseFloat(price) }]);
+  // Insertar precio asociado
+  const { error: priceError } = await supabase.from('product_prices').insert([
+    {
+      product_id: newProduct.id,
+      price: parseFloat(price),
+    },
+  ]);
 
   if (priceError) throw priceError;
 
-  return product;
+  return newProduct;
+};
+
+// 4. Eliminar producto
+export const deleteProduct = async (productId) => {
+  const { error } = await supabase.from('products').delete().eq('id', productId);
+  if (error) throw error;
 };
