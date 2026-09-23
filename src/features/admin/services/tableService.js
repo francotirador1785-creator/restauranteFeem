@@ -16,17 +16,14 @@ export const getTables = async () => {
 
 /**
  * Crear una nueva mesa (Solo Administrador)
- * Si no se provee tableNumber, auto-incrementa a partir de la última mesa.
  */
 export const createTable = async (tableNumber = null, userRole = '') => {
-  // 1. Restricción por Rol a nivel de código
   if (userRole !== 'admin') {
     throw new Error('Permiso denegado: Solo el Administrador puede crear mesas.');
   }
 
   let finalNumber = tableNumber;
 
-  // 2. Si no se especificó un número, buscar el mayor actual y sumar 1
   if (!finalNumber) {
     const { data, error: maxError } = await supabase
       .from('tables')
@@ -40,20 +37,19 @@ export const createTable = async (tableNumber = null, userRole = '') => {
     finalNumber = highestNumber + 1;
   }
 
-  // 3. Insertar la nueva mesa en Supabase
   const { data, error } = await supabase
     .from('tables')
     .insert([
       {
         table_number: Number(finalNumber),
-        status: 'available', // disponible por defecto
+        status: 'available',
       },
     ])
     .select()
     .single();
 
   if (error) {
-    if (error.code === '23505') { // Código de error Postgres para duplicate key
+    if (error.code === '23505') {
       throw new Error(`La mesa número ${finalNumber} ya existe.`);
     }
     throw error;
@@ -79,8 +75,7 @@ export const deleteTable = async (tableId, userRole = '') => {
 };
 
 /**
- * Actualizar estado de la mesa (Ej: "available", "occupied", "reserved")
- * Permitido tanto para Mozo como para Admin
+ * Actualizar estado de la mesa
  */
 export const updateTableStatus = async (tableId, status, userRole = '') => {
   if (!['admin', 'mozo'].includes(userRole)) {
