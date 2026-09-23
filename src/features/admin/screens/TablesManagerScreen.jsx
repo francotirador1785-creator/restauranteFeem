@@ -1,325 +1,239 @@
-import React, { useState, useEffect } from 'react';
+// src/features/admin/screens/TablesManagerScreen.jsx
+import React, { useEffect, useState } from 'react';
 import {
-  StyleSheet,
-  Text,
   View,
-  FlatList,
+  Text,
   TouchableOpacity,
+  StyleSheet,
+  FlatList,
   Modal,
   TextInput,
-  ActivityIndicator,
   Alert,
-  SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
-import { getTables, createTable } from '../services/tableService';
+import Header from '../../../components/common/Header'; // Tu componente Header
+import { getTables, createTable, deleteTable } from '../services/tableService';
+import { supabase } from '../../../config/supabase';
+import { useAuth } from '../../../context/AuthContext';
 
-export default function TablesManagerScreen() {
+export default function TablesManagerScreen({ navigation }) {
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // Estado del Modal
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [tableNumber, setTableNumber] = useState('');
-  const [capacity, setCapacity] = useState('4');
-  const [submitting, setSubmitting] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [customNumber, setCustomNumber] = useState('');
+  
+  // Obtenemos el rol actual del usuario autenticado
+  const { role } = useAuth();
 
   useEffect(() => {
-    loadTables();
+    fetchTables();
+
+    // Sincronización Realtime (Escucha cambios instantáneos en la BDD)
+    const channel = supabase
+      .channel('tables_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tables' },
+        () => fetchTables()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  const loadTables = async () => {
+  const fetchTables = async () => {
     try {
-      setLoading(true);
       const data = await getTables();
       setTables(data || []);
     } catch (err) {
-      Alert.alert('Error al cargar mesas', err.message);
+      console.error('Error al obtener mesas:', err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateTable = async () => {
-    if (!tableNumber.trim()) {
-      Alert.alert('Atención', 'Ingresa el número de mesa');
-      return;
-    }
-
+  const handleAddTable = async () => {
     try {
-      setSubmitting(true);
-      await createTable(tableNumber, capacity);
-      Alert.alert('¡Éxito!', `Mesa ${tableNumber} creada correctamente`);
-      setIsModalOpen(false);
-      setTableNumber('');
-      setCapacity('4');
-      loadTables(); // Recargar la lista
+      const num = customNumber.trim() ? parseInt(customNumber, 10) : null;
+      await createTable(num, role);
+      setCustomNumber('');
+      setModalVisible(false);
     } catch (err) {
-      Alert.alert('Error al crear mesa', err.message);
-    } finally {
-      setSubmitting(false);
+      Alert.alert('Restricción', err.message || 'Error al crear la mesa');
     }
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* Barra de Navegación Superior (Navbar) */}
-      <View style={styles.navbar}>
-        <View style={styles.logoCircle}>
-          <Text style={styles.logoText}>🍔</Text>
-        </View>
-        <View style={styles.navLinks}>
-          <TouchableOpacity style={styles.navItemActive}>
-            <Text style={styles.navTextActive}>Mesa</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={styles.navText}>Menú</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={styles.navText}>Pedidos</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={styles.navText}>Restaurante</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+  const handleDeleteTable = (table) => {
+    // Si no es admin, ni siquiera mostrar la alerta
+    if (role !== 'admin') return;
 
-      {/* Contenido Principal / Grilla de Mesas */}
+    Alert.alert(
+      'Eliminar Mesa',
+      `¿Deseas eliminar la Mesa Nº ${table.table_number}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteTable(table.id, role);
+            } catch (err) {
+              Alert.alert('Error', err.message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSelectTable = (table) => {
+    // Si la navega el mozo o admin para tomar pedido
+    if (navigation) {
+      navigation.navigate('MenuScreen', { table });
+    }
+  };
+
+  const renderTableItem = ({ item }) => (
+    <TouchableOpacity
+      style={styles.tableShape}
+      onPress={() => handleSelectTable(item)}
+      onLongPress={() => handleDeleteTable(item)}
+    >
+      <Text style={styles.tableNumber}>{item.table_number}</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <View style={styles.container}>
+      {/* 1. Header con Botón de Salir */}
+      <Header />
+
+      {/* 2. Lista de Mesas */}
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#F59E0B" />
+        <ActivityIndicator size="large" color="#F59E0B" style={{ flex: 1 }} />
+      ) : tables.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>
+            {role === 'admin'
+              ? 'No hay mesas creadas. Usa "+ Agregar" para empezar.'
+              : 'No hay mesas disponibles en el restaurante.'}
+          </Text>
         </View>
       ) : (
         <FlatList
           data={tables}
           keyExtractor={(item) => item.id.toString()}
+          renderItem={renderTableItem}
           numColumns={4}
           contentContainerStyle={styles.gridContainer}
-          renderItem={({ item }) => (
-            <View style={styles.tableCard}>
-              <Text style={styles.tableNumber}>{item.table_number}</Text>
-            </View>
-          )}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              No hay mesas registradas. ¡Presiona "+ Agregar" para crear la primera!
-            </Text>
-          }
         />
       )}
 
-      {/* Botón Flotante "+ Agregar" */}
-      <TouchableOpacity
-        style={styles.fabButton}
-        onPress={() => setIsModalOpen(true)}
-      >
-        <Text style={styles.fabIcon}>+</Text>
-        <Text style={styles.fabText}>Agregar</Text>
-      </TouchableOpacity>
+      {/* 3. Botón flotante para agregar (RESTRICCIÓN: Solo visible para 'admin') */}
+      {role === 'admin' && (
+        <TouchableOpacity
+          style={styles.fabButton}
+          onPress={() => setModalVisible(true)}
+        >
+          <Text style={styles.fabText}>+ Agregar</Text>
+        </TouchableOpacity>
+      )}
 
-      {/* Modal para Crear Mesa */}
-      <Modal visible={isModalOpen} animationType="fade" transparent>
+      {/* 4. Modal para Número Personalizado u Opcional */}
+      <Modal visible={modalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Nueva Mesa</Text>
-
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Crear Nueva Mesa</Text>
+            <Text style={styles.modalSubtitle}>
+              Deja el campo vacío para asignar automáticamente el siguiente número consecutivo.
+            </Text>
             <TextInput
-              placeholder="Número de mesa (Ej: 1, 2, 3)"
-              placeholderTextColor="#9CA3AF"
-              value={tableNumber}
-              onChangeText={setTableNumber}
-              keyboardType="numeric"
               style={styles.input}
-            />
-
-            <TextInput
-              placeholder="Capacidad de personas (Default: 4)"
+              placeholder="Ej: 5 (Opcional)"
               placeholderTextColor="#9CA3AF"
-              value={capacity}
-              onChangeText={setCapacity}
-              keyboardType="numeric"
-              style={styles.input}
+              keyboardType="number-pad"
+              value={customNumber}
+              onChangeText={setCustomNumber}
             />
-
-            <View style={styles.modalButtons}>
+            <View style={styles.modalActions}>
               <TouchableOpacity
-                style={[styles.modalBtn, styles.cancelBtn]}
-                onPress={() => setIsModalOpen(false)}
+                style={styles.cancelBtn}
+                onPress={() => {
+                  setCustomNumber('');
+                  setModalVisible(false);
+                }}
               >
                 <Text style={styles.btnText}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.saveBtn]}
-                onPress={handleCreateTable}
-                disabled={submitting}
-              >
-                <Text style={styles.btnText}>
-                  {submitting ? 'Guardando...' : 'Guardar'}
-                </Text>
+              <TouchableOpacity style={styles.confirmBtn} onPress={handleAddTable}>
+                <Text style={styles.btnText}>Crear</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#3B1F1B', // Fondo café / marrón oscuro de tu diseño
-  },
-  centered: {
-    flex: 1,
-    justify: 'center',
-    alignItems: 'center',
-  },
-  /* Navbar */
-  navbar: {
-    backgroundColor: '#F59E0B', // Color mostaza / naranja superior
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  logoCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 20,
-  },
-  logoText: {
-    fontSize: 20,
-  },
-  navLinks: {
-    flexDirection: 'row',
-    gap: 30,
-  },
-  navItem: {
-    paddingVertical: 4,
-  },
-  navItemActive: {
-    borderBottomWidth: 3,
-    borderBottomColor: '#FFF',
-    paddingVertical: 4,
-  },
-  navText: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  navTextActive: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  /* Grilla de Mesas */
-  gridContainer: {
-    padding: 20,
-  },
-  tableCard: {
-    width: 110,
-    height: 70,
-    backgroundColor: '#C88346', // Tono madera
-    borderRadius: 35, // Forma ovalada
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: 15,
+  container: { flex: 1, backgroundColor: '#2D1815' },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  emptyText: { color: '#FFF', fontSize: 16, textAlign: 'center' },
+  gridContainer: { padding: 20 },
+  tableShape: {
+    width: 100,
+    height: 65,
+    backgroundColor: '#C87D46',
+    borderRadius: 32,
     borderWidth: 3,
-    borderColor: '#9A5B27',
+    borderColor: '#9E5B29',
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: 12,
+    elevation: 4,
   },
-  tableNumber: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#FFF',
-  },
-  emptyText: {
-    color: '#E5E7EB',
-    textAlign: 'center',
-    marginTop: 50,
-    fontSize: 16,
-  },
-  /* Botón Flotante */
+  tableNumber: { color: '#FFF', fontSize: 24, fontWeight: 'bold' },
   fabButton: {
     position: 'absolute',
-    bottom: 25,
-    right: 25,
+    bottom: 24,
+    right: 24,
     backgroundColor: '#F59E0B',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 30,
+    paddingHorizontal: 20,
+    borderRadius: 24,
     elevation: 5,
   },
-  fabIcon: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginRight: 8,
-  },
-  fabText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  /* Modal */
+  fabText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalContent: {
-    width: '80%',
-    maxWidth: 400,
-    backgroundColor: '#2D1815',
-    borderRadius: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: '#F59E0B',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  input: {
+  modalCard: {
+    width: '85%',
+    maxWidth: 360,
     backgroundColor: '#3B1F1B',
+    padding: 20,
+    borderRadius: 12,
+  },
+  modalTitle: { color: '#F59E0B', fontSize: 18, fontWeight: 'bold', marginBottom: 6 },
+  modalSubtitle: { color: '#D1D5DB', fontSize: 12, marginBottom: 14 },
+  input: {
+    backgroundColor: '#2D1815',
     color: '#FFF',
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    fontSize: 16,
+    padding: 10,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#522A24',
   },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 12,
-  },
-  modalBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginHorizontal: 4,
-  },
-  cancelBtn: {
-    backgroundColor: '#6B7280',
-  },
-  saveBtn: {
-    backgroundColor: '#F59E0B',
-  },
-  btnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
+  cancelBtn: { backgroundColor: '#6B7280', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 },
+  confirmBtn: { backgroundColor: '#F59E0B', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 },
+  btnText: { color: '#FFF', fontWeight: 'bold' },
 });
