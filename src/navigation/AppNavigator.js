@@ -1,59 +1,38 @@
 // src/navigation/AppNavigator.js
-import React from 'react';
-import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-
-// Importación de pantallas (Ajustar según tus rutas creadas)
 import LoginScreen from '../features/auth/screens/LoginScreen';
 import TablesManagerScreen from '../features/admin/screens/TablesManagerScreen';
-// Placeholders para roles en desarrollo
-const MozoScreen = () => <View style={styles.center}><Text style={styles.text}>Vista Mozo</Text></View>;
-const CocinaScreen = () => <View style={styles.center}><Text style={styles.text}>Vista Cocina</Text></View>;
-const CajaScreen = () => <View style={styles.center}><Text style={styles.text}>Vista Caja</Text></View>;
+import MenuManagerScreen from '../features/admin/screens/MenuManagerScreen';
+import OrderScreen from '../features/mozo/screens/OrderScreen';
 
 export default function AppNavigator() {
   const { user, userRole, loading } = useAuth();
+  const [activeTab, setActiveTab] = useState('Mesa');
 
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1E1210' }}>
         <ActivityIndicator size="large" color="#F59E0B" />
       </View>
     );
   }
 
+  // 1. Si no hay sesión iniciada -> Pantalla de Login
   if (!user) {
     return <LoginScreen />;
   }
 
-  // Ruteo condicional según el rol en BDD
-  switch (userRole) {
-    case 'admin':
-      return <TablesManagerScreen />;
-    case 'mozo':
-      return <MozoScreen />;
-    case 'cocina':
-      return <CocinaScreen />;
-    case 'caja':
-      return <CajaScreen />;
-    default:
-      return (
-        <View style={styles.center}>
-          <Text style={styles.text}>Rol no reconocido o sin perfil asignado.</Text>
-        </View>
-      );
+  // 2. Si el usuario es MOZO -> Pantalla de Toma de Pedidos
+  if (userRole === 'mozo') {
+    return <OrderScreen activeTab={activeTab} onSelectTab={setActiveTab} />;
   }
-}
 
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#3B1F1B',
-  },
-  text: {
-    color: '#FFF',
-    fontSize: 18,
-  },
-});
+  // 3. Si es ADMINISTRADOR -> Acceso a Gestión de Mesas y Menú
+  if (activeTab === 'Menu') {
+    return <MenuManagerScreen activeTab={activeTab} onSelectTab={setActiveTab} />;
+  }
+
+  return <TablesManagerScreen activeTab={activeTab} onSelectTab={setActiveTab} />;
+}

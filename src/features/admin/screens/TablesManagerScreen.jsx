@@ -1,325 +1,208 @@
-import React, { useState, useEffect } from 'react';
+// src/features/admin/screens/TablesManagerScreen.jsx
+import React, { useEffect, useState } from 'react';
 import {
-  StyleSheet,
-  Text,
   View,
-  FlatList,
+  Text,
   TouchableOpacity,
-  Modal,
-  TextInput,
+  StyleSheet,
+  FlatList,
   ActivityIndicator,
-  Alert,
-  SafeAreaView,
+  Platform,
 } from 'react-native';
-import { getTables, createTable } from '../services/tableService';
+import Header from '../../../components/common/Header';
+import { getTables, createTable, deleteTable } from '../services/tableService';
+import { supabase } from '../../../config/supabase';
+import { useAuth } from '../../../context/AuthContext';
 
-export default function TablesManagerScreen() {
+export default function TablesManagerScreen({ activeTab, onSelectTab }) {
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { userRole } = useAuth();
 
-  // Estado del Modal
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [tableNumber, setTableNumber] = useState('');
-  const [capacity, setCapacity] = useState('4');
-  const [submitting, setSubmitting] = useState(false);
+  const isAdmin = userRole === 'admin';
 
   useEffect(() => {
-    loadTables();
+    fetchTables();
+
+    const channel = supabase
+      .channel('tables_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, () => fetchTables())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  const loadTables = async () => {
+  const fetchTables = async () => {
     try {
-      setLoading(true);
       const data = await getTables();
       setTables(data || []);
     } catch (err) {
-      Alert.alert('Error al cargar mesas', err.message);
+      console.error('Error al obtener mesas:', err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateTable = async () => {
-    if (!tableNumber.trim()) {
-      Alert.alert('Atención', 'Ingresa el número de mesa');
-      return;
-    }
-
+  const handleAddTable = async () => {
+    if (!isAdmin) return;
     try {
-      setSubmitting(true);
-      await createTable(tableNumber, capacity);
-      Alert.alert('¡Éxito!', `Mesa ${tableNumber} creada correctamente`);
-      setIsModalOpen(false);
-      setTableNumber('');
-      setCapacity('4');
-      loadTables(); // Recargar la lista
+      let customNum = null;
+      if (Platform.OS === 'web') {
+        const input = window.prompt('Número de mesa (deja vacío para automático):');
+        if (input === null) return;
+        if (input.trim() !== '') customNum = parseInt(input, 10);
+      }
+      await createTable(customNum, userRole);
+      await fetchTables();
     } catch (err) {
-      Alert.alert('Error al crear mesa', err.message);
-    } finally {
-      setSubmitting(false);
+      alert(err.message || 'Error al crear la mesa');
+    }
+  };
+
+  const handleDeleteTable = async (table) => {
+    if (!isAdmin) return;
+    const confirmDelete = Platform.OS === 'web'
+      ? window.confirm(`¿Eliminar la Mesa Nº ${table.table_number}?`)
+      : true;
+
+    if (confirmDelete) {
+      try {
+        await deleteTable(table.id, userRole);
+        await fetchTables();
+      } catch (err) {
+        alert(err.message || 'Error al eliminar la mesa');
+      }
+    }
+  };
+
+  const handleTableClick = (table) => {
+    // Tanto Admin como Mozo al seleccionar la mesa van a la Toma de Pedido / Carta
+    if (onSelectTab) {
+      onSelectTab('Menu', table);
     }
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Barra de Navegación Superior (Navbar) */}
-      <View style={styles.navbar}>
-        <View style={styles.logoCircle}>
-          <Text style={styles.logoText}>🍔</Text>
-        </View>
-        <View style={styles.navLinks}>
-          <TouchableOpacity style={styles.navItemActive}>
-            <Text style={styles.navTextActive}>Mesa</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={styles.navText}>Menú</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={styles.navText}>Pedidos</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={styles.navText}>Restaurante</Text>
-          </TouchableOpacity>
+    <View style={styles.container}>
+      <Header activeTab={activeTab || 'Mesa'} onSelectTab={onSelectTab} />
+
+      <View style={styles.statusBar}>
+        <Text style={styles.title}>Plano de Mesas</Text>
+        <View style={styles.legendGroup}>
+          <View style={styles.legendItem}>
+            <View style={[styles.dot, { backgroundColor: '#10B981' }]} />
+            <Text style={styles.legendText}>Libre</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.dot, { backgroundColor: '#EF4444' }]} />
+            <Text style={styles.legendText}>Ocupada</Text>
+          </View>
         </View>
       </View>
 
-      {/* Contenido Principal / Grilla de Mesas */}
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#F59E0B" />
+        <ActivityIndicator size="large" color="#F59E0B" style={{ flex: 1 }} />
+      ) : tables.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>
+            {isAdmin ? 'No hay mesas. Presiona "+ Agregar Mesa" para empezar.' : 'No hay mesas habilitadas.'}
+          </Text>
         </View>
       ) : (
         <FlatList
           data={tables}
           keyExtractor={(item) => item.id.toString()}
-          numColumns={4}
+          numColumns={Platform.OS === 'web' ? 4 : 2}
           contentContainerStyle={styles.gridContainer}
-          renderItem={({ item }) => (
-            <View style={styles.tableCard}>
-              <Text style={styles.tableNumber}>{item.table_number}</Text>
-            </View>
-          )}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              No hay mesas registradas. ¡Presiona "+ Agregar" para crear la primera!
-            </Text>
-          }
+          renderItem={({ item }) => {
+            const isOccupied = item.status === 'occupied';
+            const statusColor = isOccupied ? '#EF4444' : '#10B981';
+
+            return (
+              <TouchableOpacity
+                style={[styles.circularTable, { borderColor: statusColor }]}
+                onPress={() => handleTableClick(item)}
+                onLongPress={() => handleDeleteTable(item)}
+              >
+                <Text style={styles.tableLabel}>MESA</Text>
+                <Text style={styles.tableNumber}>{item.table_number}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+                  <Text style={styles.badgeText}>{isOccupied ? 'Ocupada' : 'Libre'}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
         />
       )}
 
-      {/* Botón Flotante "+ Agregar" */}
-      <TouchableOpacity
-        style={styles.fabButton}
-        onPress={() => setIsModalOpen(true)}
-      >
-        <Text style={styles.fabIcon}>+</Text>
-        <Text style={styles.fabText}>Agregar</Text>
-      </TouchableOpacity>
-
-      {/* Modal para Crear Mesa */}
-      <Modal visible={isModalOpen} animationType="fade" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Nueva Mesa</Text>
-
-            <TextInput
-              placeholder="Número de mesa (Ej: 1, 2, 3)"
-              placeholderTextColor="#9CA3AF"
-              value={tableNumber}
-              onChangeText={setTableNumber}
-              keyboardType="numeric"
-              style={styles.input}
-            />
-
-            <TextInput
-              placeholder="Capacidad de personas (Default: 4)"
-              placeholderTextColor="#9CA3AF"
-              value={capacity}
-              onChangeText={setCapacity}
-              keyboardType="numeric"
-              style={styles.input}
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.cancelBtn]}
-                onPress={() => setIsModalOpen(false)}
-              >
-                <Text style={styles.btnText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.saveBtn]}
-                onPress={handleCreateTable}
-                disabled={submitting}
-              >
-                <Text style={styles.btnText}>
-                  {submitting ? 'Guardando...' : 'Guardar'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+      {isAdmin && (
+        <TouchableOpacity style={styles.fabButton} onPress={handleAddTable}>
+          <Text style={styles.fabText}>+ Agregar Mesa</Text>
+        </TouchableOpacity>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#3B1F1B', // Fondo café / marrón oscuro de tu diseño
-  },
-  centered: {
-    flex: 1,
-    justify: 'center',
-    alignItems: 'center',
-  },
-  /* Navbar */
-  navbar: {
-    backgroundColor: '#F59E0B', // Color mostaza / naranja superior
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  logoCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 20,
-  },
-  logoText: {
-    fontSize: 20,
-  },
-  navLinks: {
-    flexDirection: 'row',
-    gap: 30,
-  },
-  navItem: {
-    paddingVertical: 4,
-  },
-  navItemActive: {
-    borderBottomWidth: 3,
-    borderBottomColor: '#FFF',
-    paddingVertical: 4,
-  },
-  navText: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  navTextActive: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  /* Grilla de Mesas */
-  gridContainer: {
-    padding: 20,
-  },
-  tableCard: {
-    width: 110,
-    height: 70,
-    backgroundColor: '#C88346', // Tono madera
-    borderRadius: 35, // Forma ovalada
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: 15,
-    borderWidth: 3,
-    borderColor: '#9A5B27',
-  },
-  tableNumber: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#FFF',
-  },
-  emptyText: {
-    color: '#E5E7EB',
-    textAlign: 'center',
-    marginTop: 50,
-    fontSize: 16,
-  },
-  /* Botón Flotante */
-  fabButton: {
-    position: 'absolute',
-    bottom: 25,
-    right: 25,
-    backgroundColor: '#F59E0B',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 30,
-    elevation: 5,
-  },
-  fabIcon: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginRight: 8,
-  },
-  fabText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  /* Modal */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    width: '80%',
-    maxWidth: 400,
-    backgroundColor: '#2D1815',
-    borderRadius: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: '#F59E0B',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  input: {
-    backgroundColor: '#3B1F1B',
-    color: '#FFF',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#522A24',
-  },
-  modalButtons: {
+  container: { flex: 1, backgroundColor: '#1E1210' },
+  statusBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 12,
-  },
-  modalBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
     alignItems: 'center',
-    marginHorizontal: 4,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: '#2D1815',
+    borderBottomWidth: 1,
+    borderColor: '#3D201C',
   },
-  cancelBtn: {
-    backgroundColor: '#6B7280',
+  title: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+  legendGroup: { flexDirection: 'row', gap: 15 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  legendText: { color: '#CCC', fontSize: 12 },
+  gridContainer: { padding: 15, alignItems: 'center' },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyText: { color: '#AAA', fontSize: 15 },
+
+  /* Diseño de Mesa Circular Estilo Restaurante */
+  circularTable: {
+    width: 110,
+    height: 110,
+    borderRadius: 55, // Hace que la mesa sea perfectamente circular
+    backgroundColor: '#2D1815',
+    borderWidth: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: 12,
+    cursor: 'pointer',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
-  saveBtn: {
+  tableLabel: { color: '#888', fontSize: 9, fontWeight: 'bold', letterSpacing: 1 },
+  tableNumber: { color: '#FFF', fontSize: 24, fontWeight: 'bold' },
+  statusBadge: {
+    marginTop: 2,
+    paddingVertical: 1,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  badgeText: { color: '#FFF', fontSize: 8, fontWeight: 'bold' },
+
+  fabButton: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
     backgroundColor: '#F59E0B',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 24,
+    elevation: 5,
+    cursor: 'pointer',
   },
-  btnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  fabText: { color: '#FFF', fontSize: 14, fontWeight: 'bold' },
 });
