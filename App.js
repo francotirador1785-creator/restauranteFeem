@@ -1,17 +1,16 @@
 // App.js
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { SafeAreaView, StatusBar, StyleSheet } from 'react-native';
 import { AuthProvider } from './src/context/AuthContext';
 import AppNavigator from './src/navigation/AppNavigator';
 
 export default function App() {
   return (
     <AuthProvider>
-      <View style={styles.container}>
-        <StatusBar style="light" />
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="#1E1210" />
         <AppNavigator />
-      </View>
+      </SafeAreaView>
     </AuthProvider>
   );
 }
@@ -19,6 +18,6 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#3B1F1B',
+    backgroundColor: '#1E1210',
   },
 });
