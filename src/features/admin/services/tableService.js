@@ -77,17 +77,12 @@ export const deleteTable = async (tableId, userRole = '') => {
 /**
  * Actualizar estado de la mesa
  */
-export const updateTableStatus = async (tableId, status, userRole = '') => {
-  if (!['admin', 'mozo'].includes(userRole)) {
-    throw new Error('Permiso denegado: Tu usuario no puede cambiar el estado de la mesa.');
-  }
-
+export const updateTableStatus = async (tableId, status) => {
   const { data, error } = await supabase
     .from('tables')
     .update({ status })
     .eq('id', tableId)
-    .select()
-    .single();
+    .select(); // Dejarlo como .select() sin .single()
 
   if (error) throw error;
   return data;
