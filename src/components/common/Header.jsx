@@ -1,6 +1,8 @@
 // src/components/common/Header.jsx
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+// 1. Asegúrate de importar Image desde 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native'; 
+import logoFem from '../../../assets/LogoFinalFinal.png'; 
 import { useAuth } from '../../context/AuthContext';
 
 export default function Header({ activeTab, onSelectTab }) {
@@ -17,7 +19,8 @@ export default function Header({ activeTab, onSelectTab }) {
   return (
     <View style={styles.header}>
       <View style={styles.leftContainer}>
-        <Text style={styles.logo}>🍔 Feem</Text>
+        {/* Renderizado de la imagen del logo */}
+        <Image source={logoFem} style={styles.logoImagen} />
         
         <TouchableOpacity onPress={() => onSelectTab && onSelectTab('Mesa')}>
           <Text style={[styles.navItem, activeTab === 'Mesa' && styles.activeTab]}>
@@ -53,17 +56,33 @@ const styles = StyleSheet.create({
   leftContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 20,
+    gap: 12,
   },
-  logo: { fontSize: 22, fontWeight: 'bold' },
-  navItem: { color: '#FFF', fontSize: 16, fontWeight: '600', cursor: 'pointer' },
-  activeTab: { textDecorationLine: 'underline', fontWeight: 'bold' },
+  logoImagen: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    resizeMode: 'contain',
+  },
+  logo: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  navItem: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  activeTab: {
+    fontWeight: 'bold',
+    textDecorationLine: 'underline',
+  },
   logoutButton: {
-    backgroundColor: '#3B1F1B',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    paddingHorizontal: 12,
     borderRadius: 6,
-    cursor: 'pointer',
   },
   logoutText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
 });
