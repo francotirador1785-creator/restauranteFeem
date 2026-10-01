@@ -1,53 +1,23 @@
 // src/features/cocina/services/kitchenService.js
 import { supabase } from '../../../config/supabase';
 
-// Obtener pedidos activos (pendientes o en preparación)
-export const getActiveOrders = async () => {
-  const { data, error } = await supabase
-    .from('orders')
-    .select(`
-      *,
-      order_items (*)
-    `)
-    .in('status', ['pending', 'in_preparation'])
-    .order('created_at', { ascending: true });
-
-  if (error) throw error;
-  return data;
-};
-
-// Cambiar estado del pedido (ej: pending -> in_preparation -> ready)
-export const updateOrderStatus = async (orderId, newStatus) => {
-  const { data, error } = await supabase
-    .from('orders')
-    .update({ status: newStatus })
-    .eq('id', orderId)
-    .select();
-
-  if (error) throw error;
-  return data;
-};
-
-// Crear un nuevo pedido desde la pantalla del Mozo
 export const createOrder = async (tableId, tableNumber, items, orderType = 'dine_in') => {
-  const total = items.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
+  const totalAmount = items.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
 
-  // 1. Insertar el pedido principal (pasando el objeto directo sin los corchetes [ ])
   const { data: order, error: orderError } = await supabase
     .from('orders')
-    .insert({
+    .insert([{
       table_id: tableId,
-      table_number: tableNumber,
+      table_number: Number(tableNumber),
       order_type: orderType,
       status: 'pending',
-      total: total,
-    })
+      total: totalAmount,
+    }])
     .select()
     .single();
 
-  if (orderError) throw orderError;
+  if (orderError) throw new Error('Error al crear orden: ' + orderError.message);
 
-  // 2. Insertar los ítems del detalle
   const orderItems = items.map((item) => ({
     order_id: order.id,
     product_id: item.id,
@@ -61,7 +31,37 @@ export const createOrder = async (tableId, tableNumber, items, orderType = 'dine
     .from('order_items')
     .insert(orderItems);
 
-  if (itemsError) throw itemsError;
+  if (itemsError) throw new Error('Error al guardar items: ' + itemsError.message);
 
   return order;
+};
+
+export const getTableTotal = async (tableId) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select('id, total, status')
+    .eq('table_id', tableId)
+    .neq('status', 'completed')
+    .neq('status', 'cancelled');
+
+  if (error) {
+    console.error('Error al obtener total:', error);
+    return { total: 0, orders: [] };
+  }
+
+  const total = (data || []).reduce((sum, order) => sum + Number(order.total || 0), 0);
+  return { total, orders: data };
+};
+
+export const closeTableOrders = async (tableId) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'completed' })
+    .eq('table_id', tableId)
+    .neq('status', 'completed');
+
+  if (error) {
+    console.warn('Advertencia al cerrar pedidos:', error.message);
+  }
+  return data;
 };

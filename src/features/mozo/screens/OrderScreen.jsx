@@ -10,38 +10,60 @@ import {
   TextInput,
   ActivityIndicator,
   Dimensions,
+  Alert,
 } from 'react-native';
 import Header from '../../../components/common/Header';
 import { getTables, updateTableStatus } from '../../admin/services/tableService';
 import { getCategories, getProducts } from '../../admin/services/menuService';
-import { createOrder } from '../../cocina/services/kitchenService';
-import { useAuth } from '../../../context/AuthContext';
+import { createOrder, getTableTotal, closeTableOrders } from '../../cocina/services/kitchenService';
+import { supabase } from '../../../config/supabase';
 
 const { width } = Dimensions.get('window');
 const isMobile = width < 768;
 
-export default function OrderScreen({ activeTab, onSelectTab }) {
-  const { signOut } = useAuth();
+export default function OrderScreen({ onSelectTab }) {
   const [tables, setTables] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
 
-  // Menú
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Comanda
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  // Pestaña activa dentro de la vista móvil: 'mesas' | 'menu' | 'comanda'
+  const [occupiedTotal, setOccupiedTotal] = useState(0);
+  const [loadingCheckout, setLoadingCheckout] = useState(false);
   const [step, setStep] = useState('mesas');
+
+  const MP_ALIAS = 'RESTAURANTE.FEEM.MP';
 
   useEffect(() => {
     loadInitialData();
+
+    // Suscripción Realtime para actualizar estado de mesas inmediatamente
+    const channel = supabase
+      .channel('tables-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, () => {
+        loadTablesOnly();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  const loadTablesOnly = async () => {
+    try {
+      const tablesData = await getTables();
+      setTables(tablesData || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const loadInitialData = async () => {
     try {
@@ -55,21 +77,37 @@ export default function OrderScreen({ activeTab, onSelectTab }) {
       setCategories(catData || []);
       setProducts(prodData || []);
     } catch (err) {
-      console.error('Error cargando datos:', err.message);
+      console.error('Error inicial:', err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSelectTable = (table) => {
+  const handleSelectTable = async (table) => {
     setSelectedTable(table);
     setCart([]);
-    if (isMobile) setStep('menu'); // En celular pasa automáticamente al menú
+    setOccupiedTotal(0);
+
+    if (table.status === 'occupied') {
+      try {
+        setLoadingCheckout(true);
+        const { total } = await getTableTotal(table.id);
+        setOccupiedTotal(total);
+      } catch (err) {
+        console.error('Error cobro:', err.message);
+      } finally {
+        setLoadingCheckout(false);
+      }
+    }
+
+    if (isMobile) {
+      setStep(table.status === 'occupied' ? 'comanda' : 'menu');
+    }
   };
 
   const handleAddToCart = (product) => {
     if (!selectedTable) {
-      alert('Por favor, selecciona primero una mesa.');
+      Alert.alert('Atención', 'Selecciona primero una mesa.');
       if (isMobile) setStep('mesas');
       return;
     }
@@ -100,15 +138,58 @@ export default function OrderScreen({ activeTab, onSelectTab }) {
       await createOrder(selectedTable.id, selectedTable.table_number, cart, 'dine_in');
       await updateTableStatus(selectedTable.id, 'occupied');
 
-      alert(`¡Pedido de Mesa Nº ${selectedTable.table_number} enviado a Cocina!`);
+      Alert.alert('Éxito', `Mesa ${selectedTable.table_number} marcada como OCUPADA.`);
       setSelectedTable(null);
       setCart([]);
       if (isMobile) setStep('mesas');
-      await loadInitialData();
+      await loadTablesOnly();
     } catch (err) {
-      alert('Error al enviar el pedido: ' + err.message);
+      Alert.alert('Error', err.message);
     } finally {
       setSending(false);
+    }
+  };
+
+// Finalizar Pago y liberar mesa
+  const handleFinalizePayment = async () => {
+    if (!selectedTable) return;
+
+    const targetTable = selectedTable;
+    setSending(true);
+
+    try {
+      // 1. Cierra pedidos en segundo plano
+      await closeTableOrders(targetTable.id);
+
+      // 2. Cambia estado en Supabase
+      await updateTableStatus(targetTable.id, 'available');
+
+      // 3. Actualización de estado local inmediata
+      setTables((prevTables) =>
+        prevTables.map((t) =>
+          t.id === targetTable.id ? { ...t, status: 'available' } : t
+        )
+      );
+
+      // 4. Limpia la selección de la mesa actual
+      setSelectedTable(null);
+      setOccupiedTotal(0);
+      setCart([]);
+      if (isMobile) setStep('mesas');
+
+    } catch (err) {
+      console.error('Error al liberar mesa:', err);
+      // Forzar liberación local en caso de error de red
+      setTables((prevTables) =>
+        prevTables.map((t) =>
+          t.id === targetTable.id ? { ...t, status: 'available' } : t
+        )
+      );
+      setSelectedTable(null);
+    } finally {
+      setSending(false);
+      // Recargar datos desde Supabase
+      loadTablesOnly();
     }
   };
 
@@ -119,49 +200,17 @@ export default function OrderScreen({ activeTab, onSelectTab }) {
   });
 
   const cartTotal = cart.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
-  const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  
 
   return (
     <View style={styles.container}>
       <Header activeTab="Mesa" onSelectTab={onSelectTab} />
 
-      {/* Barra de navegación de pasos exclusiva para celulares */}
-      {isMobile && (
-        <View style={styles.mobileNav}>
-          <TouchableOpacity
-            style={[styles.navBtn, step === 'mesas' && styles.navBtnActive]}
-            onPress={() => setStep('mesas')}
-          >
-            <Text style={[styles.navBtnText, step === 'mesas' && styles.navBtnTextActive]}>
-              1. Mesas {selectedTable ? `(#${selectedTable.table_number})` : ''}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.navBtn, step === 'menu' && styles.navBtnActive]}
-            onPress={() => setStep('menu')}
-          >
-            <Text style={[styles.navBtnText, step === 'menu' && styles.navBtnTextActive]}>
-              2. Menú
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.navBtn, step === 'comanda' && styles.navBtnActive]}
-            onPress={() => setStep('comanda')}
-          >
-            <Text style={[styles.navBtnText, step === 'comanda' && styles.navBtnTextActive]}>
-              3. Comanda ({totalItemsCount})
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       <View style={[styles.layout, isMobile && { flexDirection: 'column' }]}>
-        {/* PANEL 1: MESAS */}
+        {/* MESAS */}
         {(!isMobile || step === 'mesas') && (
           <View style={[styles.panel, isMobile ? { flex: 1 } : styles.tablesPanel]}>
-            <Text style={styles.sectionTitle}>Seleccionar Mesa</Text>
+            <Text style={styles.sectionTitle}>Mesas</Text>
             {loading ? (
               <ActivityIndicator color="#F59E0B" />
             ) : (
@@ -195,22 +244,18 @@ export default function OrderScreen({ activeTab, onSelectTab }) {
           </View>
         )}
 
-        {/* PANEL 2: MENÚ */}
+        {/* MENÚ */}
         {(!isMobile || step === 'menu') && (
           <View style={[styles.panel, { flex: 1 }]}>
-            <Text style={styles.sectionTitle}>
-              Menú {selectedTable ? `(Mesa Nº ${selectedTable.table_number})` : ''}
-            </Text>
-
+            <Text style={styles.sectionTitle}>Menú</Text>
             <TextInput
               style={styles.searchBar}
-              placeholder="🔍 Buscar plato..."
+              placeholder="🔍 Buscar..."
               placeholderTextColor="#888"
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
-
-            <ScrollView horizontal style={styles.catScroll} showsHorizontalScrollIndicator={false}>
+            <ScrollView horizontal style={styles.catScroll}>
               <TouchableOpacity
                 style={[styles.chip, selectedCategory === null && styles.activeChip]}
                 onPress={() => setSelectedCategory(null)}
@@ -227,7 +272,6 @@ export default function OrderScreen({ activeTab, onSelectTab }) {
                 </TouchableOpacity>
               ))}
             </ScrollView>
-
             <FlatList
               data={filteredProducts}
               keyExtractor={(item) => item.id.toString()}
@@ -242,55 +286,63 @@ export default function OrderScreen({ activeTab, onSelectTab }) {
           </View>
         )}
 
-        {/* PANEL 3: COMANDA */}
+        {/* DETALLE Y COBRO */}
         {(!isMobile || step === 'comanda') && (
           <View style={[styles.panel, isMobile ? { flex: 1 } : styles.cartPanel]}>
             <Text style={styles.sectionTitle}>
-              Comanda {selectedTable ? `Mesa #${selectedTable.table_number}` : ''}
+              {selectedTable?.status === 'occupied'
+                ? `Cobro Mesa #${selectedTable.table_number}`
+                : `Comanda Mesa #${selectedTable?.table_number || ''}`}
             </Text>
 
-            <ScrollView style={{ flex: 1 }}>
-              {cart.length === 0 ? (
-                <Text style={{ color: '#888', textAlign: 'center', marginTop: 20 }}>
-                  Aún no agregaste productos
-                </Text>
-              ) : (
-                cart.map((item) => (
-                  <View key={item.id} style={styles.cartRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{item.name}</Text>
-                      <Text style={{ color: '#F59E0B' }}>${(item.price || 0) * item.quantity}</Text>
-                    </View>
-                    <View style={styles.qtyBox}>
-                      <TouchableOpacity onPress={() => handleRemoveFromCart(item.id)}>
-                        <Text style={styles.qtyBtn}>-</Text>
-                      </TouchableOpacity>
-                      <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{item.quantity}</Text>
-                      <TouchableOpacity onPress={() => handleAddToCart(item)}>
-                        <Text style={styles.qtyBtn}>+</Text>
-                      </TouchableOpacity>
-                    </View>
+            {selectedTable?.status === 'occupied' ? (
+              <View style={{ flex: 1, justifyContent: 'space-between' }}>
+                <ScrollView>
+                  <View style={styles.payBox}>
+                    <Text style={{ color: '#AAA' }}>Total Consumido:</Text>
+                    <Text style={styles.occupiedTotalText}>${occupiedTotal}</Text>
                   </View>
-                ))
-              )}
-            </ScrollView>
-
-            <View style={styles.cartFooter}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                <Text style={{ color: '#AAA', fontSize: 16 }}>Total:</Text>
-                <Text style={styles.totalText}>${cartTotal}</Text>
+                  <View style={styles.aliasContainer}>
+                    <Text style={styles.aliasLabel}>Alias MP / Transferencia:</Text>
+                    <Text style={styles.aliasValue}>{MP_ALIAS}</Text>
+                  </View>
+                </ScrollView>
+                <TouchableOpacity
+                  style={[styles.sendBtn, { backgroundColor: '#10B981' }]}
+                  disabled={sending}
+                  onPress={handleFinalizePayment}
+                >
+                  <Text style={styles.sendBtnText}>
+                    {sending ? 'Procesando...' : 'FINALIZAR PAGO / LIBERAR'}
+                  </Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                style={[
-                  styles.sendBtn,
-                  (!selectedTable || cart.length === 0) && { backgroundColor: '#555' },
-                ]}
-                disabled={!selectedTable || cart.length === 0 || sending}
-                onPress={handleSendOrder}
-              >
-                <Text style={styles.sendBtnText}>{sending ? 'Enviando...' : 'ENVIAR A COCINA'}</Text>
-              </TouchableOpacity>
-            </View>
+            ) : (
+              <View style={{ flex: 1, justifyContent: 'space-between' }}>
+                <ScrollView>
+                  {cart.map((item) => (
+                    <View key={item.id} style={styles.cartRow}>
+                      <Text style={{ color: '#FFF' }}>{item.name} x{item.quantity}</Text>
+                      <Text style={{ color: '#F59E0B' }}>
+                        ${(item.price || 0) * item.quantity}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
+                <View style={styles.cartFooter}>
+                  <Text style={styles.totalText}>Total: ${cartTotal}</Text>
+                  <TouchableOpacity
+                    style={[styles.sendBtn, (!selectedTable || cart.length === 0) && { backgroundColor: '#555' }]}
+                    disabled={!selectedTable || cart.length === 0 || sending}
+                    onPress={handleSendOrder}
+                  >
+                    <Text style={styles.sendBtnText}>
+                      {sending ? 'Enviando...' : 'ENVIAR A COCINA'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         )}
       </View>
@@ -302,45 +354,29 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#1E1210' },
   layout: { flex: 1, flexDirection: 'row' },
   panel: { padding: 10 },
-  tablesPanel: { width: 220, backgroundColor: '#2D1815', borderRightWidth: 1, borderColor: '#3D201C' },
-  cartPanel: { width: 280, backgroundColor: '#2D1815', borderLeftWidth: 1, borderColor: '#3D201C' },
+  tablesPanel: { width: 200, backgroundColor: '#2D1815', borderRightWidth: 1, borderColor: '#3D201C' },
+  cartPanel: { width: 260, backgroundColor: '#2D1815', borderLeftWidth: 1, borderColor: '#3D201C' },
   sectionTitle: { color: '#FFF', fontSize: 15, fontWeight: 'bold', marginBottom: 10 },
-  mobileNav: {
-    flexDirection: 'row',
-    backgroundColor: '#2D1815',
-    borderBottomWidth: 1,
-    borderColor: '#3D201C',
-  },
-  navBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  navBtnActive: { borderBottomWidth: 3, borderColor: '#F59E0B' },
-  navBtnText: { color: '#888', fontSize: 12, fontWeight: 'bold' },
-  navBtnTextActive: { color: '#F59E0B' },
-  circleTable: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    borderWidth: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: 6,
-    backgroundColor: '#1E1210',
-  },
-  tableNum: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+  circleTable: { width: 65, height: 65, borderRadius: 33, borderWidth: 2, justifyContent: 'center', alignItems: 'center', margin: 5, backgroundColor: '#1E1210' },
+  tableNum: { color: '#FFF', fontSize: 14, fontWeight: 'bold' },
   badge: { paddingHorizontal: 4, borderRadius: 3, marginTop: 2 },
   badgeText: { color: '#FFF', fontSize: 8, fontWeight: 'bold' },
   searchBar: { backgroundColor: '#2D1815', color: '#FFF', padding: 8, borderRadius: 6, marginBottom: 8 },
   catScroll: { maxHeight: 38, marginBottom: 8 },
-  chip: { backgroundColor: '#2D1815', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginRight: 6 },
+  chip: { backgroundColor: '#2D1815', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, marginRight: 6 },
   activeChip: { backgroundColor: '#F59E0B' },
-  chipText: { color: '#FFF', fontSize: 11, fontWeight: 'bold' },
+  chipText: { color: '#FFF', fontSize: 11 },
   productCard: { flex: 1, backgroundColor: '#2D1815', padding: 10, margin: 4, borderRadius: 6 },
   prodName: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
   prodPrice: { color: '#F59E0B', fontSize: 12, marginTop: 4 },
-  cartRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderColor: '#3D201C', alignItems: 'center' },
-  qtyBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#1E1210', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  qtyBtn: { color: '#F59E0B', fontSize: 18, fontWeight: 'bold', paddingHorizontal: 6 },
-  cartFooter: { borderTopWidth: 1, borderColor: '#3D201C', paddingTop: 10, marginTop: 10 },
-  totalText: { color: '#10B981', fontSize: 18, fontWeight: 'bold' },
+  cartRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderColor: '#3D201C' },
+  cartFooter: { borderTopWidth: 1, borderColor: '#3D201C', paddingTop: 10 },
+  totalText: { color: '#10B981', fontSize: 16, fontWeight: 'bold', marginBottom: 8 },
   sendBtn: { backgroundColor: '#F59E0B', padding: 12, borderRadius: 6, alignItems: 'center' },
   sendBtnText: { color: '#FFF', fontWeight: 'bold' },
+  payBox: { backgroundColor: '#1E1210', padding: 12, borderRadius: 6, alignItems: 'center', marginBottom: 10 },
+  occupiedTotalText: { color: '#10B981', fontSize: 22, fontWeight: 'bold' },
+  aliasContainer: { backgroundColor: '#3D201C', padding: 10, borderRadius: 6 },
+  aliasLabel: { color: '#AAA', fontSize: 11 },
+  aliasValue: { color: '#F59E0B', fontSize: 13, fontWeight: 'bold' },
 });
