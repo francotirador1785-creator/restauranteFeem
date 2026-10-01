@@ -1,6 +1,37 @@
 // src/features/cocina/services/kitchenService.js
 import { supabase } from '../../../config/supabase';
 
+// 1. Exportación requerida por KitchenScreen
+export const getActiveOrders = async () => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      *,
+      order_items (*)
+    `)
+    .in('status', ['pending', 'in_preparation'])
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error al obtener órdenes activas:', error.message);
+    throw error;
+  }
+  return data || [];
+};
+
+// 2. Cambiar estado de orden individual
+export const updateOrderStatus = async (orderId, newStatus) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: newStatus })
+    .eq('id', orderId)
+    .select();
+
+  if (error) throw new Error(error.message);
+  return data;
+};
+
+// 3. Crear orden desde Mozo
 export const createOrder = async (tableId, tableNumber, items, orderType = 'dine_in') => {
   const totalAmount = items.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
 
@@ -36,6 +67,7 @@ export const createOrder = async (tableId, tableNumber, items, orderType = 'dine
   return order;
 };
 
+// 4. Obtener total acumulado de una mesa
 export const getTableTotal = async (tableId) => {
   const { data, error } = await supabase
     .from('orders')
@@ -45,7 +77,7 @@ export const getTableTotal = async (tableId) => {
     .neq('status', 'cancelled');
 
   if (error) {
-    console.error('Error al obtener total:', error);
+    console.error('Error al obtener total:', error.message);
     return { total: 0, orders: [] };
   }
 
@@ -53,6 +85,7 @@ export const getTableTotal = async (tableId) => {
   return { total, orders: data };
 };
 
+// 5. Cerrar pedidos al liberar la mesa
 export const closeTableOrders = async (tableId) => {
   const { data, error } = await supabase
     .from('orders')

@@ -7,23 +7,36 @@ export const getTables = async () => {
     .select('*')
     .order('table_number', { ascending: true });
 
-  if (error) {
-    console.error('Error cargando mesas:', error);
-    throw error;
+  if (error) throw new Error(error.message);
+  return data || [];
+};
+
+export const createTable = async (customNumber = null) => {
+  let tableNumber = customNumber;
+
+  // Si no se especificó un número, se asigna el siguiente automáticamente
+  if (!tableNumber) {
+    const existingTables = await getTables();
+    tableNumber = existingTables.length > 0 
+      ? Math.max(...existingTables.map((t) => Number(t.table_number) || 0)) + 1 
+      : 1;
   }
+
+  const { data, error } = await supabase
+    .from('tables')
+    .insert([{ table_number: Number(tableNumber), status: 'available' }])
+    .select();
+
+  if (error) throw new Error('Error al crear la mesa: ' + error.message);
   return data;
 };
 
-export const updateTableStatus = async (tableId, status) => {
+export const deleteTable = async (tableId) => {
   const { data, error } = await supabase
     .from('tables')
-    .update({ status })
-    .eq('id', tableId)
-    .select();
+    .delete()
+    .eq('id', tableId);
 
-  if (error) {
-    console.error(`Error cambiando estado de mesa ${tableId} a ${status}:`, error);
-    throw error;
-  }
+  if (error) throw new Error('Error al eliminar la mesa: ' + error.message);
   return data;
 };

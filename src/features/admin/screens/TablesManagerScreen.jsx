@@ -51,25 +51,29 @@ export default function TablesManagerScreen({ activeTab, onSelectTab }) {
       let customNum = null;
       if (Platform.OS === 'web') {
         const input = window.prompt('Número de mesa (deja vacío para automático):');
-        if (input === null) return;
+        if (input === null) return; // Canceló el prompt
         if (input.trim() !== '') customNum = parseInt(input, 10);
       }
-      await createTable(customNum, userRole);
+      
+      await createTable(customNum);
       await fetchTables();
     } catch (err) {
       alert(err.message || 'Error al crear la mesa');
     }
   };
 
-  const handleDeleteTable = async (table) => {
+  const handleDeleteTable = async (e, table) => {
+    // Evita activar la selección de la mesa al hacer clic en borrar
+    if (e && e.stopPropagation) e.stopPropagation();
+
     if (!isAdmin) return;
     const confirmDelete = Platform.OS === 'web'
-      ? window.confirm(`¿Eliminar la Mesa Nº ${table.table_number}?`)
+      ? window.confirm(`¿Seguro que deseas eliminar la Mesa Nº ${table.table_number}?`)
       : true;
 
     if (confirmDelete) {
       try {
-        await deleteTable(table.id, userRole);
+        await deleteTable(table.id);
         await fetchTables();
       } catch (err) {
         alert(err.message || 'Error al eliminar la mesa');
@@ -78,7 +82,6 @@ export default function TablesManagerScreen({ activeTab, onSelectTab }) {
   };
 
   const handleTableClick = (table) => {
-    // Tanto Admin como Mozo al seleccionar la mesa van a la Toma de Pedido / Carta
     if (onSelectTab) {
       onSelectTab('Menu', table);
     }
@@ -121,17 +124,28 @@ export default function TablesManagerScreen({ activeTab, onSelectTab }) {
             const statusColor = isOccupied ? '#EF4444' : '#10B981';
 
             return (
-              <TouchableOpacity
-                style={[styles.circularTable, { borderColor: statusColor }]}
-                onPress={() => handleTableClick(item)}
-                onLongPress={() => handleDeleteTable(item)}
-              >
-                <Text style={styles.tableLabel}>MESA</Text>
-                <Text style={styles.tableNumber}>{item.table_number}</Text>
-                <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-                  <Text style={styles.badgeText}>{isOccupied ? 'Ocupada' : 'Libre'}</Text>
-                </View>
-              </TouchableOpacity>
+              <View style={styles.tableWrapper}>
+                <TouchableOpacity
+                  style={[styles.circularTable, { borderColor: statusColor }]}
+                  onPress={() => handleTableClick(item)}
+                >
+                  <Text style={styles.tableLabel}>MESA</Text>
+                  <Text style={styles.tableNumber}>{item.table_number}</Text>
+                  <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+                    <Text style={styles.badgeText}>{isOccupied ? 'Ocupada' : 'Libre'}</Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* Botón explícito para eliminar mesa (Solo Admin) */}
+                {isAdmin && (
+                  <TouchableOpacity
+                    style={styles.deleteBadgeBtn}
+                    onPress={(e) => handleDeleteTable(e, item)}
+                  >
+                    <Text style={styles.deleteBadgeText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             );
           }}
         />
@@ -167,16 +181,18 @@ const styles = StyleSheet.create({
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#AAA', fontSize: 15 },
 
-  /* Diseño de Mesa Circular Estilo Restaurante */
+  tableWrapper: {
+    position: 'relative',
+    margin: 12,
+  },
   circularTable: {
     width: 110,
     height: 110,
-    borderRadius: 55, // Hace que la mesa sea perfectamente circular
+    borderRadius: 55,
     backgroundColor: '#2D1815',
     borderWidth: 4,
     justifyContent: 'center',
     alignItems: 'center',
-    margin: 12,
     cursor: 'pointer',
     elevation: 5,
     shadowColor: '#000',
@@ -192,6 +208,24 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   badgeText: { color: '#FFF', fontSize: 8, fontWeight: 'bold' },
+
+  /* Botón flotante para eliminar en la esquina de cada mesa */
+  deleteBadgeBtn: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#EF4444',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#1E1210',
+    cursor: 'pointer',
+    zIndex: 10,
+  },
+  deleteBadgeText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
 
   fabButton: {
     position: 'absolute',
