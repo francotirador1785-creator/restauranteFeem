@@ -59,8 +59,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   logoImagen: {
-    width: 50,
-    height: 50,
+    width: 65,
+    height: 65,
     borderRadius: 25,
     resizeMode: 'contain',
   },
